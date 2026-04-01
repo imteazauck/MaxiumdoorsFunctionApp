@@ -2,60 +2,69 @@ name: CI
 
 on:
   push:
-    branches: [ develop, main ]
+    branches: [ develop ]
   pull_request:
-    branches: [ develop, main ]
+    branches: [ develop ]
+
+env:
+  AZURE_FUNCTIONAPP_NAME: maxiumdoorsFunctionApp
+  DOTNET_VERSION: '8.0.x'
+  PUBLISH_DIR: ./publish
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
 
       - name: Restore
         run: dotnet restore
 
       - name: Build
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test --no-build --verbosity normal
+        run: dotnet test --configuration Release --no-build --verbosity normal
 
       - name: Publish
-        run: dotnet publish --no-build --configuration Release -o ./publish
+        run: dotnet publish --configuration Release --no-build -o ${{ env.PUBLISH_DIR }}
 
       - name: Upload published artifact
         uses: actions/upload-artifact@v4
         with:
           name: published-function
-          path: ./publish
+          path: ${{ env.PUBLISH_DIR }}
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: published-function
-          path: ./publish
+          path: ${{ env.PUBLISH_DIR }}
 
       - name: Deploy to Azure Function App
-        uses: azure/webapps-deploy@v2
+        uses: Azure/functions-action@v1
         with:
-          app-name: 'maxiumdoorsFunctionApp' 
+          app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+          package: ${{ env.PUBLISH_DIR }}
           publish-profile: ${{ secrets.MAXIUMDOORSFUNCAPPSECRET }}
-          package: ./publish
