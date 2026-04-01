@@ -56,6 +56,6 @@ jobs:
       - name: Deploy to Azure Function App
         uses: azure/webapps-deploy@v2
         with:
-          app-name: 'MaxiumDoorsFunctionApp' 
+          app-name: 'maxiumdoorsFunctionApp' 
           publish-profile: ${{ secrets.MAXIUMDOORSFUNCAPPSECRET }}
           package: ./publish
