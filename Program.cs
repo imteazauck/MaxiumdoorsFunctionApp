@@ -1,4 +1,5 @@
 using MaxiumDoorsFunctionApp;
+using MaxiumDoorsFunctionApp.Interfaces;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
@@ -32,6 +33,7 @@ builder.Services.AddSingleton(_ => new CosmosClient(
     }));
 
 builder.Services.AddSingleton<CosmosOrderRepository>();
+builder.Services.AddSingleton<IEmailService, SendGridEmailService>();
 
 builder.Build().Run();
 

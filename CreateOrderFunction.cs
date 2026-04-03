@@ -1,3 +1,4 @@
+using MaxiumDoorsFunctionApp.Interfaces;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
@@ -11,6 +12,7 @@ namespace MaxiumDoorsFunctionApp;
 public class CreateOrderFunction
 {
     private readonly CosmosOrderRepository _repository;
+    private readonly IEmailService _emailService;
     private readonly ILogger<CreateOrderFunction> _logger;
     private readonly string _allowedOrigin;
 
@@ -21,10 +23,13 @@ public class CreateOrderFunction
 
     public CreateOrderFunction(
         CosmosOrderRepository repository,
+        IEmailService emailService,
+
         ILogger<CreateOrderFunction> logger,
         IConfiguration configuration)
     {
         _repository = repository;
+        _emailService = emailService;
         _logger = logger;
 
         _allowedOrigin = configuration["AllowedOrigin"]
@@ -68,7 +73,21 @@ public class CreateOrderFunction
             }
 
             var result = await _repository.CreateOrderAsync(payload, cancellationToken);
-
+            try
+            {
+                await _emailService.SendOrderConfirmationAsync(
+                    payload.CustomerDetails.Email,
+                    payload.CustomerDetails.CustomerName,
+                    payload.CustomerDetails.CompanyName,
+                    result.OrderNumber,
+                    result.QuoteRef,
+                    result.CreatedAt,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Order created but confirmation email failed for {Email}", payload.CustomerDetails.Email);
+            }
             var response = req.CreateResponse(HttpStatusCode.Created);
             AddCorsHeaders(response);
             await response.WriteAsJsonAsync(result, cancellationToken);
