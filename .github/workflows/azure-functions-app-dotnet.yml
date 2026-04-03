@@ -7,9 +7,9 @@ on:
     branches: [develop]
 
 env:
-  AZURE_FUNCTIONAPP_NAME: maxiumdoorsfunctionapp
+  AZURE_FUNCTIONAPP_NAME: maxiumdoorsFunctionApp
   DOTNET_VERSION: '8.0.x'
-  FUNCTION_PROJECT: ./backend/MaxiumDoors.Api/MaxiumDoors.Api.csproj
+  FUNCTION_PROJECT: ./MaxiumDoorsFunctionApp/MaxiumDoorsFunctionApp
   PUBLISH_DIR: ./publish
 
 jobs:
