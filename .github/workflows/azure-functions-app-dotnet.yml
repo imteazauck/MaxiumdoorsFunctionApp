@@ -55,13 +55,11 @@ jobs:
           path: ${{ env.PUBLISH_DIR }}
 
       - name: Show published files
-      run: |
-        echo "Published output:"
-        find ${{ env.PUBLISH_DIR }} -maxdepth 2 -type f | sort
+        run: echo "Published output:"
+             find ${{ env.PUBLISH_DIR }} -maxdepth 2 -type f | sort
 
-        - name: Show functions metadata
-          run: |
-          echo "functions.metadata:"
+      - name: Show functions metadata
+        run: echo "functions.metadata:"
           cat ${{ env.PUBLISH_DIR }}/functions.metadata || true
           echo ""
           echo "host.json:"
