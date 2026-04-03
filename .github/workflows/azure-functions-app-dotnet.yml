@@ -9,7 +9,7 @@ on:
 env:
   AZURE_FUNCTIONAPP_NAME: maxiumdoorsFunctionApp
   DOTNET_VERSION: '8.0.x'
-  FUNCTION_PROJECT: ./MaxiumDoorsFunctionApp/MaxiumDoorsFunctionApp.csproj
+  FUNCTION_PROJECT: ./MaxiumDoorsFunctionApp.csproj
   PUBLISH_DIR: ./publish
 
 jobs:
