@@ -33,6 +33,7 @@ builder.Services.AddSingleton(_ => new CosmosClient(
     }));
 
 builder.Services.AddSingleton<CosmosOrderRepository>();
+builder.Services.AddSingleton<AdminAuthService>();
 builder.Services.AddSingleton<IEmailService, SendGridEmailService>();
 
 builder.Build().Run();

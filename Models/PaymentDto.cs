@@ -6,4 +6,5 @@ public sealed class PaymentDto
     public string CardNumber { get; set; } = string.Empty;
     public string Expiry { get; set; } = string.Empty;
     public string Cvv { get; set; } = string.Empty;
+    public string Last4 { get; set; } = string.Empty;
 }

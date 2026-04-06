@@ -37,6 +37,30 @@ public sealed class OrderDocument
     [JsonProperty("orderStatus")]
     public string OrderStatus { get; set; } = "pending";
 
+    [JsonProperty("paymentStatus")]
+    public string PaymentStatus { get; set; } = "unpaid";
+
+    [JsonProperty("paymentMethod")]
+    public string PaymentMethod { get; set; } = string.Empty;
+
+    [JsonProperty("paymentReference")]
+    public string PaymentReference { get; set; } = string.Empty;
+
+    [JsonProperty("amountPaid")]
+    public decimal? AmountPaid { get; set; }
+
+    [JsonProperty("paidAt")]
+    public string? PaidAt { get; set; }
+
+    [JsonProperty("completedAt")]
+    public string? CompletedAt { get; set; }
+
+    [JsonProperty("adminNotes")]
+    public string AdminNotes { get; set; } = string.Empty;
+
+    [JsonProperty("lastUpdatedBy")]
+    public string LastUpdatedBy { get; set; } = string.Empty;
+
     [JsonProperty("createdAt")]
     public string CreatedAt { get; set; } = string.Empty;
 
