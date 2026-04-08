@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Text.Json;
 
-namespace MaxiumDoorsFunctionApp;
+namespace MaxiumDoorsFunctionApp.Functions;
 
 public class CreateOrderFunction
 {

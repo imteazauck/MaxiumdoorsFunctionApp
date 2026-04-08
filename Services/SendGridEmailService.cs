@@ -24,7 +24,7 @@ public sealed class SendGridEmailService : IEmailService
     public async Task SendOrderConfirmationAsync(
         string toEmail,
         string customerName,
-        string companyName,
+        string? companyName,
         string orderNumber,
         string quoteRef,
         string createdAt,
