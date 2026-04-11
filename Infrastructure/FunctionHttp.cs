@@ -21,7 +21,7 @@ public static class FunctionHttp
     public static void AddCorsHeaders(HttpResponseData response, string allowedOrigin)
     {
         response.Headers.Add("Access-Control-Allow-Origin", allowedOrigin);
-        response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+        response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
         response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization, x-functions-key");
     }
 
@@ -75,11 +75,31 @@ public static class FunctionHttp
 
     public static async Task<ClaimsPrincipal?> ValidateAdminAsync(
         HttpRequestData req,
-        AdminAuthService adminAuthService,
+        IJwtValidator jwtValidator,
         CancellationToken cancellationToken)
     {
         await Task.CompletedTask;
+
         var token = GetBearerToken(req);
-        return string.IsNullOrWhiteSpace(token) ? null : adminAuthService.ValidateToken(token);
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var principal = jwtValidator.Validate(token);
+        if (principal is null)
+        {
+            return null;
+        }
+
+        var role = principal.FindFirst(ClaimTypes.Role)?.Value
+            ?? principal.FindFirst("role")?.Value;
+
+        if (!string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return principal;
     }
 }

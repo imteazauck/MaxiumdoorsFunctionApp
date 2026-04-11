@@ -1,5 +1,6 @@
 using MaxiumDoorsFunctionApp;
 using MaxiumDoorsFunctionApp.Interfaces;
+using MaxiumDoorsFunctionApp.Services;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Builder;
@@ -33,9 +34,11 @@ builder.Services.AddSingleton(_ => new CosmosClient(
     }));
 
 builder.Services.AddSingleton<CosmosOrderRepository>();
-builder.Services.AddSingleton<AdminAuthService>();
+builder.Services.AddSingleton<CosmosResellerRepository>();
 builder.Services.AddSingleton<IEmailService, SendGridEmailService>();
-
+builder.Services.AddSingleton<IAuthRepository, AuthRepository>();
+builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
+builder.Services.AddSingleton<IJwtValidator, JwtValidator>();
 builder.Build().Run();
 
 static string? GetSetting(IConfiguration configuration, string key)

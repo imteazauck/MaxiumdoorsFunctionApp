@@ -11,18 +11,18 @@ namespace MaxiumDoorsFunctionApp;
 public sealed class AdminOrdersFunction
 {
     private readonly CosmosOrderRepository _repository;
-    private readonly AdminAuthService _adminAuthService;
+    private readonly IJwtValidator _jwtValidator;
     private readonly ILogger<AdminOrdersFunction> _logger;
     private readonly string _allowedOrigin;
 
     public AdminOrdersFunction(
         CosmosOrderRepository repository,
-        AdminAuthService adminAuthService,
+        IJwtValidator jwtValidator,
         ILogger<AdminOrdersFunction> logger,
         IConfiguration configuration)
     {
         _repository = repository;
-        _adminAuthService = adminAuthService;
+        _jwtValidator = jwtValidator;
         _logger = logger;
         _allowedOrigin = configuration["AllowedOrigin"]
             ?? configuration["Values:AllowedOrigin"]
@@ -39,7 +39,7 @@ public sealed class AdminOrdersFunction
             return FunctionHttp.CreateCorsResponse(req, HttpStatusCode.OK, _allowedOrigin);
         }
 
-        var principal = await FunctionHttp.ValidateAdminAsync(req, _adminAuthService, cancellationToken);
+        var principal = await FunctionHttp.ValidateAdminAsync(req, _jwtValidator, cancellationToken);
         if (principal is null)
         {
             return await FunctionHttp.CreateErrorResponseAsync(req, HttpStatusCode.Unauthorized, "Admin authentication is required.", _allowedOrigin, cancellationToken);
@@ -73,7 +73,7 @@ public sealed class AdminOrdersFunction
             return FunctionHttp.CreateCorsResponse(req, HttpStatusCode.OK, _allowedOrigin);
         }
 
-        var principal = await FunctionHttp.ValidateAdminAsync(req, _adminAuthService, cancellationToken);
+        var principal = await FunctionHttp.ValidateAdminAsync(req, _jwtValidator, cancellationToken);
         if (principal is null)
         {
             return await FunctionHttp.CreateErrorResponseAsync(req, HttpStatusCode.Unauthorized, "Admin authentication is required.", _allowedOrigin, cancellationToken);
@@ -107,7 +107,7 @@ public sealed class AdminOrdersFunction
             return FunctionHttp.CreateCorsResponse(req, HttpStatusCode.OK, _allowedOrigin);
         }
 
-        var principal = await FunctionHttp.ValidateAdminAsync(req, _adminAuthService, cancellationToken);
+        var principal = await FunctionHttp.ValidateAdminAsync(req, _jwtValidator, cancellationToken);
         if (principal is null)
         {
             return await FunctionHttp.CreateErrorResponseAsync(req, HttpStatusCode.Unauthorized, "Admin authentication is required.", _allowedOrigin, cancellationToken);

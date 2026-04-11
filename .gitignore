@@ -483,3 +483,5 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 /local.settings.json
+/.github/workflows/azure-functions-app-dotnet.yml
+/appsettings.Development.json
