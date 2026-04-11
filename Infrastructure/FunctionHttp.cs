@@ -73,7 +73,7 @@ public static class FunctionHttp
         return header[7..].Trim();
     }
 
-    public static async Task<ClaimsPrincipal?> ValidateAdminAsync(
+    public static async Task<ClaimsPrincipal?> ValidateAuthenticatedAsync(
         HttpRequestData req,
         IJwtValidator jwtValidator,
         CancellationToken cancellationToken)
@@ -86,20 +86,29 @@ public static class FunctionHttp
             return null;
         }
 
-        var principal = jwtValidator.Validate(token);
-        if (principal is null)
-        {
-            return null;
-        }
+        return jwtValidator.Validate(token);
+    }
 
-        var role = principal.FindFirst(ClaimTypes.Role)?.Value
-            ?? principal.FindFirst("role")?.Value;
-
-        if (!string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))
+    public static async Task<ClaimsPrincipal?> ValidateAdminAsync(
+        HttpRequestData req,
+        IJwtValidator jwtValidator,
+        CancellationToken cancellationToken)
+    {
+        var principal = await ValidateAuthenticatedAsync(req, jwtValidator, cancellationToken);
+        if (principal is null || !IsInRole(principal, UserRoles.Admin))
         {
             return null;
         }
 
         return principal;
     }
+
+    public static bool IsInRole(ClaimsPrincipal principal, string role)
+    {
+        var value = principal.FindFirst(ClaimTypes.Role)?.Value ?? principal.FindFirst("role")?.Value;
+        return string.Equals(value, role, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string? GetResellerId(ClaimsPrincipal principal) =>
+        principal.FindFirst("resellerId")?.Value;
 }

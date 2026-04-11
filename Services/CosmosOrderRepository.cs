@@ -21,6 +21,7 @@ public sealed class CosmosOrderRepository
 
     public async Task<CreateOrderResponseDto> CreateOrderAsync(
         CreateOrderRequestDto payload,
+        string? resellerId = null,
         CancellationToken cancellationToken = default)
     {
         var now = DateTime.UtcNow;
@@ -32,6 +33,7 @@ public sealed class CosmosOrderRepository
             PartitionKey = orderNumber,
             OrderNumber = orderNumber,
             QuoteRef = payload.QuoteRef?.Trim() ?? string.Empty,
+            ResellerId = string.IsNullOrWhiteSpace(resellerId) ? null : resellerId.Trim(),
             CustomerDetails = SanitizeCustomerDetails(payload.CustomerDetails),
             Doors = payload.Doors ?? [],
             Subtotal = payload.Subtotal,
@@ -45,16 +47,11 @@ public sealed class CosmosOrderRepository
 
         try
         {
-            await _container.CreateItemAsync(
-                document,
-                new PartitionKey(document.PartitionKey),
-                cancellationToken: cancellationToken);
+            await _container.CreateItemAsync(document, new PartitionKey(document.PartitionKey), cancellationToken: cancellationToken);
         }
         catch (CosmosException ex)
         {
-            throw new InvalidOperationException(
-                $"Cosmos create failed. StatusCode={(int)ex.StatusCode}. Message={ex.Message}",
-                ex);
+            throw new InvalidOperationException($"Cosmos create failed. StatusCode={(int)ex.StatusCode}. Message={ex.Message}", ex);
         }
 
         return new CreateOrderResponseDto
@@ -72,6 +69,7 @@ public sealed class CosmosOrderRepository
         string? status,
         string? paymentStatus,
         string? search,
+        string? resellerId = null,
         CancellationToken cancellationToken = default)
     {
         var sql = new StringBuilder(@"
@@ -90,6 +88,11 @@ public sealed class CosmosOrderRepository
                 c.updatedAt
             FROM c
             WHERE c.type = 'order'");
+
+        if (!string.IsNullOrWhiteSpace(resellerId))
+        {
+            sql.Append(" AND c.resellerId = @resellerId");
+        }
 
         if (!string.IsNullOrWhiteSpace(status) && !string.Equals(status, "all", StringComparison.OrdinalIgnoreCase))
         {
@@ -116,21 +119,10 @@ public sealed class CosmosOrderRepository
         sql.Append(" ORDER BY c.createdAt DESC");
 
         var queryDefinition = new QueryDefinition(sql.ToString());
-
-        if (!string.IsNullOrWhiteSpace(status) && !string.Equals(status, "all", StringComparison.OrdinalIgnoreCase))
-        {
-            queryDefinition.WithParameter("@status", status.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(paymentStatus) && !string.Equals(paymentStatus, "all", StringComparison.OrdinalIgnoreCase))
-        {
-            queryDefinition.WithParameter("@paymentStatus", paymentStatus.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            queryDefinition.WithParameter("@search", search.Trim());
-        }
+        if (!string.IsNullOrWhiteSpace(resellerId)) queryDefinition.WithParameter("@resellerId", resellerId);
+        if (!string.IsNullOrWhiteSpace(status) && !string.Equals(status, "all", StringComparison.OrdinalIgnoreCase)) queryDefinition.WithParameter("@status", status);
+        if (!string.IsNullOrWhiteSpace(paymentStatus) && !string.Equals(paymentStatus, "all", StringComparison.OrdinalIgnoreCase)) queryDefinition.WithParameter("@paymentStatus", paymentStatus);
+        if (!string.IsNullOrWhiteSpace(search)) queryDefinition.WithParameter("@search", search);
 
         var iterator = _container.GetItemQueryIterator<OrderSummaryDto>(queryDefinition);
         var results = new List<OrderSummaryDto>();
@@ -146,36 +138,31 @@ public sealed class CosmosOrderRepository
 
     public async Task<OrderDocument?> GetOrderByOrderNumberAsync(
         string orderNumber,
+        string? resellerId = null,
         CancellationToken cancellationToken = default)
     {
-        var query = new QueryDefinition(@"
-            SELECT TOP 1 *
+        var queryText = @"
+            SELECT *
             FROM c
             WHERE c.type = 'order'
-              AND c.orderNumber = @orderNumber")
-            .WithParameter("@orderNumber", orderNumber);
+              AND c.orderNumber = @orderNumber" + (!string.IsNullOrWhiteSpace(resellerId) ? " AND c.resellerId = @resellerId" : string.Empty);
 
-        var requestOptions = new QueryRequestOptions
-        {
-            PartitionKey = new PartitionKey(orderNumber)
-        };
+        var queryDefinition = new QueryDefinition(queryText).WithParameter("@orderNumber", orderNumber);
+        if (!string.IsNullOrWhiteSpace(resellerId)) queryDefinition.WithParameter("@resellerId", resellerId);
 
-        var iterator = _container.GetItemQueryIterator<OrderDocument>(
-            queryDefinition: query,
-            requestOptions: requestOptions);
+        var options = new QueryRequestOptions { PartitionKey = new PartitionKey(orderNumber) };
+        var iterator = _container.GetItemQueryIterator<OrderDocument>(queryDefinition, requestOptions: options);
 
         while (iterator.HasMoreResults)
         {
             var response = await iterator.ReadNextAsync(cancellationToken);
             var order = response.Resource.FirstOrDefault();
-
             if (order is not null)
             {
                 order.CustomerDetails = SanitizeCustomerDetails(order.CustomerDetails);
                 order.DeliveryDetails = SanitizeDeliveryDetails(order.DeliveryDetails);
                 order.Payment = SanitizePayment(order.Payment);
                 order.Doors ??= [];
-
                 return order;
             }
         }
@@ -187,9 +174,10 @@ public sealed class CosmosOrderRepository
         string orderNumber,
         string updatedBy,
         ManualPaymentUpdateRequestDto payload,
+        string? resellerId = null,
         CancellationToken cancellationToken = default)
     {
-        var order = await GetOrderByOrderNumberAsync(orderNumber, cancellationToken);
+        var order = await GetOrderByOrderNumberAsync(orderNumber, resellerId, cancellationToken);
         if (order is null)
         {
             return null;
@@ -215,19 +203,27 @@ public sealed class CosmosOrderRepository
         order.DeliveryDetails = SanitizeDeliveryDetails(order.DeliveryDetails);
         order.Payment = SanitizePayment(order.Payment);
 
-        var response = await _container.ReplaceItemAsync(
-            order,
-            order.Id,
-            new PartitionKey(order.PartitionKey),
-            cancellationToken: cancellationToken);
+        await _container.ReplaceItemAsync(order, order.Id, new PartitionKey(order.PartitionKey), cancellationToken: cancellationToken);
+        return order;
+    }
 
-        return response.Resource;
+    private static DateTime ParseOrNow(string? value, DateTime fallback)
+        => DateTime.TryParse(value, out var parsed) ? parsed : fallback;
+
+    private static string AppendNote(string existing, string? notes, string updatedBy, DateTime now)
+    {
+        if (string.IsNullOrWhiteSpace(notes))
+        {
+            return existing ?? string.Empty;
+        }
+
+        var entry = $"[{now:yyyy-MM-dd HH:mm}] {updatedBy}: {notes.Trim()}";
+        return string.IsNullOrWhiteSpace(existing) ? entry : $"{existing}{Environment.NewLine}{entry}";
     }
 
     private static CustomerDetailsDto SanitizeCustomerDetails(CustomerDetailsDto? customerDetails)
     {
         customerDetails ??= new CustomerDetailsDto();
-
         customerDetails.CustomerName ??= string.Empty;
         customerDetails.CompanyName ??= string.Empty;
         customerDetails.Email ??= string.Empty;
@@ -236,14 +232,12 @@ public sealed class CosmosOrderRepository
         customerDetails.AddressLine2 ??= string.Empty;
         customerDetails.City ??= string.Empty;
         customerDetails.Postcode ??= string.Empty;
-
         return customerDetails;
     }
 
     private static DeliveryDetailsDto SanitizeDeliveryDetails(DeliveryDetailsDto? deliveryDetails)
     {
         deliveryDetails ??= new DeliveryDetailsDto();
-
         deliveryDetails.AddressLine1 ??= string.Empty;
         deliveryDetails.AddressLine2 ??= string.Empty;
         deliveryDetails.City ??= string.Empty;
@@ -256,40 +250,16 @@ public sealed class CosmosOrderRepository
         deliveryDetails.SiteContactPhone ??= string.Empty;
         deliveryDetails.DeliveryMethod ??= string.Empty;
         deliveryDetails.EstimatedDeliveryDate ??= string.Empty;
-
         return deliveryDetails;
     }
 
     private static PaymentDto SanitizePayment(PaymentDto? payment)
     {
         payment ??= new PaymentDto();
-
-        var digits = new string((payment.CardNumber ?? string.Empty).Where(char.IsDigit).ToArray());
-        var last4 = digits.Length >= 4 ? digits[^4..] : digits;
-
-        return new PaymentDto
-        {
-            CardholderName = payment.CardholderName ?? string.Empty,
-            CardNumber = string.IsNullOrWhiteSpace(last4) ? string.Empty : $"**** **** **** {last4}",
-            Expiry = payment.Expiry ?? string.Empty,
-            Cvv = string.Empty,
-            Last4 = last4
-        };
-    }
-
-    private static DateTime ParseOrNow(string? value, DateTime fallback)
-    {
-        return DateTime.TryParse(value, out var parsed) ? parsed.ToUniversalTime() : fallback;
-    }
-
-    private static string AppendNote(string existing, string incoming, string updatedBy, DateTime timestamp)
-    {
-        if (string.IsNullOrWhiteSpace(incoming))
-        {
-            return existing;
-        }
-
-        var note = $"[{timestamp:yyyy-MM-dd HH:mm:ss} UTC by {updatedBy}] {incoming.Trim()}";
-        return string.IsNullOrWhiteSpace(existing) ? note : $"{existing}\n{note}";
+        payment.CardholderName ??= string.Empty;
+        payment.CardNumber ??= string.Empty;
+        payment.Expiry ??= string.Empty;
+        payment.Cvv ??= string.Empty;
+        return payment;
     }
 }

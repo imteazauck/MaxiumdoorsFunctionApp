@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MaxiumDoorsFunctionApp;
 
 public sealed class ResellerCredentialSummaryDto
@@ -7,6 +9,6 @@ public sealed class ResellerCredentialSummaryDto
     public bool HasPassword { get; set; }
     public string? PasswordLastSetAt { get; set; }
 
-    // Temporary development-only placeholder until password hashing is implemented.
-    public string? PasswordPlaintext { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PasswordHash { get; set; }
 }

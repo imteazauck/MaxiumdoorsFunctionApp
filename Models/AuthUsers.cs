@@ -1,30 +1,30 @@
-﻿using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace MaxiumDoorsFunctionApp;
 
 public sealed class AuthUser
 {
-    [JsonPropertyName("id")]
-    public string Id { get; set; } = default!;
+    [JsonProperty("id")]
+    public string Id { get; set; } = string.Empty;
 
-    [JsonPropertyName("email")]
-    public string Email { get; set; } = default!;
+    [JsonProperty("email")]
+    public string Email { get; set; } = string.Empty;
 
-    [JsonPropertyName("passwordHash")]
-    public string PasswordHash { get; set; } = default!;
+    [JsonProperty("passwordHash")]
+    public string PasswordHash { get; set; } = string.Empty;
 
-    [JsonPropertyName("role")]
-    public string Role { get; set; } = default!;
+    [JsonProperty("role")]
+    public string Role { get; set; } = string.Empty;
 
-    [JsonPropertyName("isActive")]
+    [JsonProperty("isActive")]
     public bool IsActive { get; set; } = true;
 
-    [JsonPropertyName("resellerId")]
+    [JsonProperty("resellerId")]
     public string? ResellerId { get; set; }
 
-    [JsonPropertyName("displayName")]
-    public string DisplayName { get; set; } = default!;
+    [JsonProperty("displayName")]
+    public string DisplayName { get; set; } = string.Empty;
 
-    [JsonPropertyName("createdAt")]
+    [JsonProperty("createdAt")]
     public DateTimeOffset CreatedAt { get; set; }
 }

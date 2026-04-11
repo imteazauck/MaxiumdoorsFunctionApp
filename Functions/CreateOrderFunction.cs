@@ -13,6 +13,7 @@ public class CreateOrderFunction
 {
     private readonly CosmosOrderRepository _repository;
     private readonly IEmailService _emailService;
+    private readonly IJwtValidator _jwtValidator;
     private readonly ILogger<CreateOrderFunction> _logger;
     private readonly string _allowedOrigin;
 
@@ -24,24 +25,19 @@ public class CreateOrderFunction
     public CreateOrderFunction(
         CosmosOrderRepository repository,
         IEmailService emailService,
-
+        IJwtValidator jwtValidator,
         ILogger<CreateOrderFunction> logger,
         IConfiguration configuration)
     {
         _repository = repository;
         _emailService = emailService;
+        _jwtValidator = jwtValidator;
         _logger = logger;
-
-        _allowedOrigin = configuration["AllowedOrigin"]
-            ?? configuration["Values:AllowedOrigin"]
-            ?? "http://localhost:5173";
-
+        _allowedOrigin = configuration["AllowedOrigin"] ?? configuration["Values:AllowedOrigin"] ?? "http://localhost:5173";
     }
 
     [Function("CreateOrder")]
-    public async Task<HttpResponseData> Run(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "orders")] HttpRequestData req,
-        CancellationToken cancellationToken)
+    public async Task<HttpResponseData> Run([HttpTrigger(AuthorizationLevel.Anonymous, "post", "options", Route = "orders")] HttpRequestData req, CancellationToken cancellationToken)
     {
         if (HttpMethods.IsOptions(req.Method))
         {
@@ -52,10 +48,7 @@ public class CreateOrderFunction
 
         try
         {
-            var payload = await JsonSerializer.DeserializeAsync<CreateOrderRequestDto>(
-                req.Body,
-                JsonOptions,
-                cancellationToken);
+            var payload = await JsonSerializer.DeserializeAsync<CreateOrderRequestDto>(req.Body, JsonOptions, cancellationToken);
 
             if (payload is null)
             {
@@ -72,22 +65,21 @@ public class CreateOrderFunction
                 return await CreateErrorResponseAsync(req, HttpStatusCode.BadRequest, "At least one door is required.", cancellationToken);
             }
 
-            var result = await _repository.CreateOrderAsync(payload, cancellationToken);
+            var principal = await FunctionHttp.ValidateAuthenticatedAsync(req, _jwtValidator, cancellationToken);
+            var resellerId = principal is not null && FunctionHttp.IsInRole(principal, UserRoles.Reseller)
+                ? FunctionHttp.GetResellerId(principal)
+                : null;
+
+            var result = await _repository.CreateOrderAsync(payload, resellerId, cancellationToken);
             try
             {
-                await _emailService.SendOrderConfirmationAsync(
-                    payload.CustomerDetails.Email,
-                    payload.CustomerDetails.CustomerName,
-                    payload.CustomerDetails.CompanyName,
-                    result.OrderNumber,
-                    result.QuoteRef,
-                    result.CreatedAt,
-                    cancellationToken);
+                await _emailService.SendOrderConfirmationAsync(payload.CustomerDetails.Email, payload.CustomerDetails.CustomerName, payload.CustomerDetails.CompanyName, result.OrderNumber, result.QuoteRef, result.CreatedAt, cancellationToken);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Order created but confirmation email failed for {Email}", payload.CustomerDetails.Email);
             }
+
             var response = req.CreateResponse(HttpStatusCode.Created);
             AddCorsHeaders(response);
             await response.WriteAsJsonAsync(result, cancellationToken);
@@ -101,11 +93,7 @@ public class CreateOrderFunction
         catch (CosmosException ex)
         {
             _logger.LogError(ex, "Cosmos DB failure while creating order. Status code: {StatusCode}", ex.StatusCode);
-            return await CreateErrorResponseAsync(
-                req,
-                HttpStatusCode.InternalServerError,
-                "The order could not be saved. Check Cosmos DB configuration and container settings.",
-                cancellationToken);
+            return await CreateErrorResponseAsync(req, HttpStatusCode.InternalServerError, "The order could not be saved. Check Cosmos DB configuration and container settings.", cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -117,20 +105,12 @@ public class CreateOrderFunction
             _logger.LogError(ex, "Unexpected error while creating order.");
             var response = req.CreateResponse(HttpStatusCode.InternalServerError);
             AddCorsHeaders(response);
-            await response.WriteAsJsonAsync(new
-            {
-                error = ex.Message,
-                inner = ex.InnerException?.Message
-            }, cancellationToken);
+            await response.WriteAsJsonAsync(new { error = ex.Message, inner = ex.InnerException?.Message }, cancellationToken);
             return response;
         }
     }
 
-    private async Task<HttpResponseData> CreateErrorResponseAsync(
-        HttpRequestData req,
-        HttpStatusCode statusCode,
-        string message,
-        CancellationToken cancellationToken)
+    private async Task<HttpResponseData> CreateErrorResponseAsync(HttpRequestData req, HttpStatusCode statusCode, string message, CancellationToken cancellationToken)
     {
         var response = req.CreateResponse(statusCode);
         AddCorsHeaders(response);
@@ -147,7 +127,6 @@ public class CreateOrderFunction
 
     private static class HttpMethods
     {
-        public static bool IsOptions(string? method) =>
-            string.Equals(method, "OPTIONS", StringComparison.OrdinalIgnoreCase);
+        public static bool IsOptions(string? method) => string.Equals(method, "OPTIONS", StringComparison.OrdinalIgnoreCase);
     }
 }

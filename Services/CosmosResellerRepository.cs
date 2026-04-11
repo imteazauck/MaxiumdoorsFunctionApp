@@ -10,6 +10,7 @@ public sealed class CosmosResellerRepository
 {
     private readonly Container _resellersContainer;
     private readonly Container _pricingContainer;
+    private readonly Container _usersContainer;
     private readonly Lazy<IReadOnlyList<PricingTemplateSeedRow>> _defaultTemplate;
 
     public CosmosResellerRepository(CosmosClient cosmosClient, IConfiguration configuration)
@@ -17,9 +18,11 @@ public sealed class CosmosResellerRepository
         var databaseId = GetRequiredSetting(configuration, "CosmosDb:DatabaseId");
         var resellersContainerId = GetSetting(configuration, "CosmosDb:ResellersContainerId") ?? "Resellers";
         var pricingContainerId = GetSetting(configuration, "CosmosDb:PricingContainerId") ?? "ResellerPricing";
+        var usersContainerId = GetSetting(configuration, "CosmosDb:UsersContainerId") ?? "Users";
 
         _resellersContainer = cosmosClient.GetContainer(databaseId, resellersContainerId);
         _pricingContainer = cosmosClient.GetContainer(databaseId, pricingContainerId);
+        _usersContainer = cosmosClient.GetContainer(databaseId, usersContainerId);
         _defaultTemplate = new Lazy<IReadOnlyList<PricingTemplateSeedRow>>(LoadDefaultTemplate);
     }
 
@@ -45,15 +48,8 @@ public sealed class CosmosResellerRepository
 
     public async Task<ResellerDocument?> GetResellerAsync(string resellerId, CancellationToken cancellationToken = default)
     {
-        try
-        {
-            var response = await _resellersContainer.ReadItemAsync<ResellerDocument>(resellerId, new PartitionKey(resellerId), cancellationToken: cancellationToken);
-            return SanitizeReseller(response.Resource);
-        }
-        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
+        var document = await GetResellerInternalAsync(resellerId, cancellationToken);
+        return document is null ? null : SanitizeReseller(document);
     }
 
     public async Task<ResellerDocument> CreateResellerAsync(ResellerUpsertRequestDto payload, CancellationToken cancellationToken = default)
@@ -84,7 +80,7 @@ public sealed class CosmosResellerRepository
                 LoginEmail = payload.Email.Trim(),
                 HasPassword = false,
                 PasswordLastSetAt = null,
-                PasswordPlaintext = null
+                PasswordHash = null
             },
             CreatedAt = now,
             UpdatedAt = now
@@ -110,7 +106,7 @@ public sealed class CosmosResellerRepository
 
     public async Task<ResellerDocument?> UpdateResellerAsync(string resellerId, ResellerUpsertRequestDto payload, CancellationToken cancellationToken = default)
     {
-        var existing = await GetResellerAsync(resellerId, cancellationToken);
+        var existing = await GetResellerInternalAsync(resellerId, cancellationToken);
         if (existing is null)
         {
             return null;
@@ -128,18 +124,20 @@ public sealed class CosmosResellerRepository
         existing.Notes = payload.Notes.Trim();
         existing.UpdatedAt = DateTime.UtcNow.ToString("O");
 
+        existing.Credentials ??= new ResellerCredentialSummaryDto();
         if (string.IsNullOrWhiteSpace(existing.Credentials.LoginEmail))
         {
             existing.Credentials.LoginEmail = existing.Email;
         }
 
         var response = await _resellersContainer.ReplaceItemAsync(existing, existing.Id, new PartitionKey(existing.ResellerId), cancellationToken: cancellationToken);
+        await SyncAuthUserAsync(response.Resource, cancellationToken);
         return SanitizeReseller(response.Resource);
     }
 
     public async Task<bool> DeleteResellerAsync(string resellerId, CancellationToken cancellationToken = default)
     {
-        var existing = await GetResellerAsync(resellerId, cancellationToken);
+        var existing = await GetResellerInternalAsync(resellerId, cancellationToken);
         if (existing is null)
         {
             return false;
@@ -147,6 +145,7 @@ public sealed class CosmosResellerRepository
 
         await DeleteAllPricingForResellerAsync(resellerId, cancellationToken);
         await _resellersContainer.DeleteItemAsync<ResellerDocument>(resellerId, new PartitionKey(resellerId), cancellationToken: cancellationToken);
+        await DeleteAuthUserIfExistsAsync(resellerId, cancellationToken);
         return true;
     }
 
@@ -205,12 +204,13 @@ public sealed class CosmosResellerRepository
 
     public async Task<ResellerCredentialSummaryDto?> UpsertCredentialsAsync(string resellerId, ResellerCredentialUpdateRequestDto payload, CancellationToken cancellationToken = default)
     {
-        var reseller = await GetResellerAsync(resellerId, cancellationToken);
+        var reseller = await GetResellerInternalAsync(resellerId, cancellationToken);
         if (reseller is null)
         {
             return null;
         }
 
+        reseller.Credentials ??= new ResellerCredentialSummaryDto();
         reseller.Credentials.LoginEnabled = payload.LoginEnabled;
         reseller.Credentials.LoginEmail = payload.LoginEmail.Trim();
 
@@ -218,11 +218,12 @@ public sealed class CosmosResellerRepository
         {
             reseller.Credentials.HasPassword = true;
             reseller.Credentials.PasswordLastSetAt = DateTime.UtcNow.ToString("O");
-            reseller.Credentials.PasswordPlaintext = payload.Password;
+            reseller.Credentials.PasswordHash = PasswordHasher.HashPassword(payload.Password);
         }
 
         reseller.UpdatedAt = DateTime.UtcNow.ToString("O");
         var response = await _resellersContainer.ReplaceItemAsync(reseller, reseller.Id, new PartitionKey(reseller.ResellerId), cancellationToken: cancellationToken);
+        await SyncAuthUserAsync(response.Resource, cancellationToken);
         return SanitizeReseller(response.Resource).Credentials;
     }
 
@@ -286,6 +287,162 @@ public sealed class CosmosResellerRepository
         {
             // Best effort cleanup.
         }
+    }
+
+    private async Task<ResellerDocument?> GetResellerInternalAsync(string resellerId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await _resellersContainer.ReadItemAsync<ResellerDocument>(resellerId, new PartitionKey(resellerId), cancellationToken: cancellationToken);
+            return response.Resource;
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    private async Task SyncAuthUserAsync(ResellerDocument reseller, CancellationToken cancellationToken)
+    {
+        reseller.Credentials ??= new ResellerCredentialSummaryDto();
+
+        var loginEmail = reseller.Credentials.LoginEmail?.Trim();
+        var displayName = BuildDisplayName(reseller);
+        var shouldBeActive = reseller.IsActive
+            && reseller.Credentials.LoginEnabled
+            && !string.IsNullOrWhiteSpace(loginEmail)
+            && !string.IsNullOrWhiteSpace(reseller.Credentials.PasswordHash);
+
+        var existing = await GetAuthUserByIdAsync(reseller.ResellerId, cancellationToken)
+            ?? await GetAuthUserByResellerIdAsync(reseller.ResellerId, cancellationToken)
+            ?? await GetAuthUserByEmailAsync(loginEmail, cancellationToken);
+
+        if (existing is null)
+        {
+            if (!shouldBeActive)
+            {
+                return;
+            }
+
+            var created = new AuthUser
+            {
+                Id = reseller.ResellerId,
+                Email = loginEmail!,
+                PasswordHash = reseller.Credentials.PasswordHash!,
+                Role = UserRoles.Reseller,
+                IsActive = true,
+                ResellerId = reseller.ResellerId,
+                DisplayName = displayName,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+
+            await _usersContainer.CreateItemAsync(created, new PartitionKey(created.Id), cancellationToken: cancellationToken);
+            return;
+        }
+
+        existing.Email = !string.IsNullOrWhiteSpace(loginEmail) ? loginEmail! : existing.Email;
+        if (!string.IsNullOrWhiteSpace(reseller.Credentials.PasswordHash))
+        {
+            existing.PasswordHash = reseller.Credentials.PasswordHash!;
+        }
+
+        existing.Role = UserRoles.Reseller;
+        existing.IsActive = shouldBeActive;
+        existing.ResellerId = reseller.ResellerId;
+        existing.DisplayName = displayName;
+
+        await _usersContainer.UpsertItemAsync(existing, new PartitionKey(existing.Id), cancellationToken: cancellationToken);
+    }
+
+    private async Task<AuthUser?> GetAuthUserByIdAsync(string userId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await _usersContainer.ReadItemAsync<AuthUser>(userId, new PartitionKey(userId), cancellationToken: cancellationToken);
+            return response.Resource;
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+    }
+
+    private async Task<AuthUser?> GetAuthUserByResellerIdAsync(string resellerId, CancellationToken cancellationToken)
+    {
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.resellerId = @resellerId")
+            .WithParameter("@resellerId", resellerId);
+
+        using var iterator = _usersContainer.GetItemQueryIterator<AuthUser>(query);
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync(cancellationToken);
+            var user = response.Resource.FirstOrDefault();
+            if (user is not null)
+            {
+                return user;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<AuthUser?> GetAuthUserByEmailAsync(string? email, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return null;
+        }
+
+        var query = new QueryDefinition("SELECT * FROM c WHERE LOWER(c.email) = @email")
+            .WithParameter("@email", email.Trim().ToLowerInvariant());
+
+        using var iterator = _usersContainer.GetItemQueryIterator<AuthUser>(query);
+        while (iterator.HasMoreResults)
+        {
+            var response = await iterator.ReadNextAsync(cancellationToken);
+            var user = response.Resource.FirstOrDefault();
+            if (user is not null)
+            {
+                return user;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task DeleteAuthUserIfExistsAsync(string resellerId, CancellationToken cancellationToken)
+    {
+        var user = await GetAuthUserByIdAsync(resellerId, cancellationToken)
+            ?? await GetAuthUserByResellerIdAsync(resellerId, cancellationToken);
+
+        if (user is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _usersContainer.DeleteItemAsync<AuthUser>(user.Id, new PartitionKey(user.Id), cancellationToken: cancellationToken);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            // Already gone.
+        }
+    }
+
+    private static string BuildDisplayName(ResellerDocument reseller)
+    {
+        var contactName = string.Join(" ", new[] { reseller.FirstName?.Trim(), reseller.LastName?.Trim() }
+            .Where(static value => !string.IsNullOrWhiteSpace(value)));
+
+        if (!string.IsNullOrWhiteSpace(contactName) && !string.IsNullOrWhiteSpace(reseller.CompanyName))
+        {
+            return $"{contactName} ({reseller.CompanyName.Trim()})";
+        }
+
+        return !string.IsNullOrWhiteSpace(contactName)
+            ? contactName
+            : reseller.CompanyName.Trim();
     }
 
     private static IReadOnlyList<PricingTemplateSeedRow> LoadDefaultTemplate()
@@ -363,7 +520,7 @@ public sealed class CosmosResellerRepository
     {
         document.Credentials ??= new ResellerCredentialSummaryDto();
         document.Credentials.LoginEmail ??= string.Empty;
-        document.Credentials.PasswordPlaintext = null;
+        document.Credentials.PasswordHash = null;
         return document;
     }
 

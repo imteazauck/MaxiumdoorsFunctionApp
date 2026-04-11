@@ -342,7 +342,7 @@ public sealed class AdminResellersFunction
                         cancellationToken);
                 }
 
-                credentials.PasswordPlaintext = null;
+                credentials.PasswordHash = null;
                 return await FunctionHttp.CreateJsonResponseAsync(req, HttpStatusCode.OK, credentials, _allowedOrigin, cancellationToken);
             }
 
@@ -365,7 +365,7 @@ public sealed class AdminResellersFunction
                         cancellationToken);
                 }
 
-                updated.PasswordPlaintext = null;
+                updated.PasswordHash = null;
                 return await FunctionHttp.CreateJsonResponseAsync(req, HttpStatusCode.OK, updated, _allowedOrigin, cancellationToken);
             }
 

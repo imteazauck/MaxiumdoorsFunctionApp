@@ -19,6 +19,9 @@ public sealed class OrderDocument
     [JsonProperty("quoteRef")]
     public string QuoteRef { get; set; } = string.Empty;
 
+    [JsonProperty("resellerId")]
+    public string? ResellerId { get; set; }
+
     [JsonProperty("customerDetails")]
     public CustomerDetailsDto CustomerDetails { get; set; } = new();
 
